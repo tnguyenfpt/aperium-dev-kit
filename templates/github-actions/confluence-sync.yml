@@ -112,6 +112,9 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.has_spec_changes == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      epic_page_id: ${{ steps.confluence.outputs.epic_page_id }}
+      completed_specs_page_id: ${{ steps.confluence.outputs.completed_specs_page_id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -316,3 +319,80 @@ jobs:
             echo "::error::$ERRORS page(s) failed to sync. Check logs above for details."
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Archive completed specs — move epic page to "Completed Specs"
+  # ---------------------------------------------------------------------------
+  archive-if-completed:
+    needs: [detect-changes, sync-to-confluence]
+    if: needs.detect-changes.outputs.has_spec_changes == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for completed status and archive
+        env:
+          AUTH: ${{ secrets.ATLASSIAN_EMAIL }}:${{ secrets.ATLASSIAN_API_TOKEN }}
+          BASE_URL: ${{ secrets.ATLASSIAN_BASE_URL }}
+          TICKET_ID: ${{ needs.detect-changes.outputs.ticket_id }}
+          EPIC_PAGE_ID: ${{ needs.sync-to-confluence.outputs.epic_page_id }}
+          COMPLETED_PAGE_ID: ${{ needs.sync-to-confluence.outputs.completed_specs_page_id }}
+        run: |
+          SPEC_DIR="specs/${TICKET_ID}"
+          REQ_FILE="${SPEC_DIR}/requirements.md"
+
+          # Check if requirements.md contains a "status: completed" header
+          if [ ! -f "$REQ_FILE" ]; then
+            echo "::notice::No requirements.md found — skipping archive check."
+            exit 0
+          fi
+
+          if ! grep -qi "status:.*completed" "$REQ_FILE"; then
+            echo "::notice::Spec not marked as completed — skipping archive."
+            exit 0
+          fi
+
+          echo "::notice::Spec marked as completed — archiving to Completed Specs."
+
+          # Re-discover page IDs (sync job outputs may not propagate)
+          AUTH_HEADER=$(echo -n "$AUTH" | base64)
+
+          # Get the epic page's current ancestors to find its parent
+          EPIC_RESPONSE=$(curl -sf \
+            -H "Authorization: Basic $AUTH_HEADER" \
+            "$BASE_URL/wiki/rest/api/content/${EPIC_PAGE_ID}?expand=ancestors,version" \
+            2>&1) || {
+            echo "::error::Could not fetch epic page ${EPIC_PAGE_ID}"
+            exit 0
+          }
+
+          CURRENT_VERSION=$(echo "$EPIC_RESPONSE" | jq -r '.version.number')
+          NEW_VERSION=$((CURRENT_VERSION + 1))
+          SPACE_KEY=$(echo "$EPIC_RESPONSE" | jq -r '.space.key // empty')
+
+          if [ -z "$COMPLETED_PAGE_ID" ] || [ "$COMPLETED_PAGE_ID" = "null" ]; then
+            echo "::warning::Completed Specs page ID not available — cannot archive."
+            exit 0
+          fi
+
+          # Move the epic page under "Completed Specs" by updating its ancestor
+          curl -sf -X PUT \
+            -H "Authorization: Basic $AUTH_HEADER" \
+            -H "Content-Type: application/json" \
+            "$BASE_URL/wiki/rest/api/content/${EPIC_PAGE_ID}" \
+            -d "$(jq -n \
+              --arg title "$(echo "$EPIC_RESPONSE" | jq -r '.title')" \
+              --argjson version "$NEW_VERSION" \
+              --arg spaceKey "$SPACE_KEY" \
+              --arg ancestorId "$COMPLETED_PAGE_ID" \
+              '{
+                type: "page",
+                title: $title,
+                space: {key: $spaceKey},
+                version: {number: $version},
+                ancestors: [{id: $ancestorId}]
+              }')" \
+            > /dev/null 2>&1 && \
+            echo "::notice::Archived ${TICKET_ID} to Completed Specs." || \
+            echo "::warning::Failed to archive ${TICKET_ID}. Manual move may be required."

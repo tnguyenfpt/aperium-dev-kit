@@ -105,8 +105,7 @@ runs:
         find_page_by_cql() {
           local cql="$1"
           local encoded_cql
-          encoded_cql=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''${cql}'''))" 2>/dev/null \
-            || printf '%s' "${cql}" | jq -sRr @uri)
+          encoded_cql=$(printf '%s' "${cql}" | jq -sRr @uri)
 
           local response
           response=$(confluence_api GET "${CONTENT_API}/search?cql=${encoded_cql}&limit=1")

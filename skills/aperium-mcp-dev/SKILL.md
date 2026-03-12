@@ -1,6 +1,6 @@
 ---
 name: aperium-mcp-dev
-description: Use when creating a new MCP server for a third-party integration, when a FastMCP scaffold with PII masking, RBAC, tests, and Docker configuration following Aperium patterns is needed
+description: "Use when creating a new MCP server for a third-party integration, when a FastMCP scaffold with PII masking, RBAC, tests, and Docker configuration following Aperium patterns is needed"
 ---
 
 # Aperium MCP Server Development Skill

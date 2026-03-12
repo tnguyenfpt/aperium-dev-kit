@@ -1,6 +1,6 @@
 ---
 name: aperium-security
-description: Use when reviewing a feature branch, MCP server, or agentic code for security compliance, or before merging any PR that touches auth, permissions, or data access
+description: "Use when reviewing a feature branch, MCP server, or agentic code for security compliance, or before merging any PR that touches auth, permissions, or data access"
 ---
 
 # Aperium Security Assessment Skill

@@ -59,14 +59,24 @@ If MCP is unavailable:
 - Report the tickets that should be transitioned
 - Provide manual instructions
 
-### 6. Commit Updated Spec
+### 6. Mark Spec as Completed
+
+Add `status: completed` to the top of `specs/{TICKET_KEY}/requirements.md` (after the title heading):
+
+```markdown
+**Status**: Completed
+```
+
+This header triggers CI archival — the `confluence-sync` workflow moves the epic page from "Active Specs" to "Completed Specs" when it detects this marker.
+
+### 7. Commit Updated Spec
 
 ```bash
 git add specs/{TICKET_KEY}/
 git commit -m "docs(spec): close {TICKET_KEY} with implementation notes"
 ```
 
-### 7. Report
+### 8. Report
 
 Summarize:
 - Implementation notes added to decisions.md

@@ -304,7 +304,7 @@ Each repo tracks its template version:
 
 **What it does**:
 1. Runs the `confluence-discover` action to find spec directories with changes
-2. Converts Markdown specs to Confluence ADF format
+2. Converts Markdown specs to Confluence XHTML storage format
 3. Creates or updates Confluence pages under the project's spec space
 
 Confluence is a read-only mirror. Git is the source of truth for specs.
