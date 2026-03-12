@@ -1,0 +1,205 @@
+# =============================================================================
+# Close-the-Loop — Reusable Workflow Template
+# Transitions Jira tickets to Done when PRs merge. Checks if Epic is complete.
+# Copy this file to .github/workflows/ in your repository.
+# See templates/github-actions/README.md for setup instructions.
+# =============================================================================
+name: Close the Loop
+
+on:
+  workflow_call:
+    inputs:
+      jira_project_key:
+        description: 'Jira project key (e.g., APER)'
+        type: string
+        required: true
+    secrets:
+      ATLASSIAN_API_TOKEN:
+        required: true
+      ATLASSIAN_EMAIL:
+        required: true
+      ATLASSIAN_BASE_URL:
+        required: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Extract ticket ID and PR metadata from the branch name
+  # ---------------------------------------------------------------------------
+  extract-context:
+    runs-on: ubuntu-latest
+    outputs:
+      ticket_id: ${{ steps.extract.outputs.ticket_id }}
+      pr_url: ${{ steps.extract.outputs.pr_url }}
+      pr_title: ${{ steps.extract.outputs.pr_title }}
+    steps:
+      - name: Extract ticket from branch
+        id: extract
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          echo "Branch: $BRANCH"
+
+          # Extract ticket ID from branch name
+          # Supports: feat/APER-123-description, fix/APER-456-thing,
+          #           feature/APER-789-foo, refactor/APER-012-bar, etc.
+          TICKET_ID=$(echo "$BRANCH" | grep -oP '(?:feat|feature|fix|refactor|test|docs|chore|perf|security)/\K[A-Z]+-\d+' || echo "")
+
+          if [ -z "$TICKET_ID" ]; then
+            echo "No ticket ID found in branch name: $BRANCH"
+            echo "ticket_id=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "ticket_id=$TICKET_ID" >> $GITHUB_OUTPUT
+          echo "pr_url=${{ github.event.pull_request.html_url }}" >> $GITHUB_OUTPUT
+          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Transition the Jira ticket to Done and add a PR-merged comment
+  # ---------------------------------------------------------------------------
+  transition-jira:
+    needs: extract-context
+    if: needs.extract-context.outputs.ticket_id != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Transition ticket to Done
+        id: transition
+        continue-on-error: true
+        env:
+          AUTH: ${{ secrets.ATLASSIAN_EMAIL }}:${{ secrets.ATLASSIAN_API_TOKEN }}
+          BASE_URL: ${{ secrets.ATLASSIAN_BASE_URL }}
+          TICKET_ID: ${{ needs.extract-context.outputs.ticket_id }}
+          PR_URL: ${{ needs.extract-context.outputs.pr_url }}
+        run: |
+          AUTH_HEADER=$(echo -n "$AUTH" | base64)
+
+          # --- Add PR link as comment on the Jira ticket ---
+          curl -s -X POST \
+            -H "Authorization: Basic $AUTH_HEADER" \
+            -H "Content-Type: application/json" \
+            "$BASE_URL/rest/api/3/issue/$TICKET_ID/comment" \
+            -d "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"PR merged: $PR_URL\"}]}]}}" \
+            > /dev/null 2>&1 || echo "Warning: Could not add comment"
+
+          # --- Get available transitions for the ticket ---
+          TRANSITIONS=$(curl -s \
+            -H "Authorization: Basic $AUTH_HEADER" \
+            "$BASE_URL/rest/api/3/issue/$TICKET_ID/transitions")
+
+          # Find a "Done" transition (common names: Done, Closed, Resolved)
+          # Customize the regex below if your workflow uses different names.
+          DONE_ID=$(echo "$TRANSITIONS" | jq -r '.transitions[] | select(.name | test("Done|Closed|Resolved"; "i")) | .id' | head -1)
+
+          if [ -z "$DONE_ID" ] || [ "$DONE_ID" = "null" ]; then
+            echo "Warning: No 'Done' transition found for $TICKET_ID"
+            echo "Available transitions:"
+            echo "$TRANSITIONS" | jq -r '.transitions[].name'
+            exit 0
+          fi
+
+          # --- Transition the ticket ---
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Basic $AUTH_HEADER" \
+            -H "Content-Type: application/json" \
+            "$BASE_URL/rest/api/3/issue/$TICKET_ID/transitions" \
+            -d "{\"transition\": {\"id\": \"$DONE_ID\"}}")
+
+          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "Transitioned $TICKET_ID to Done"
+          else
+            echo "Warning: Transition returned HTTP $HTTP_CODE"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Check whether all child issues of the parent Epic are now Done.
+  #         If so, auto-transition the Epic to Done as well.
+  # ---------------------------------------------------------------------------
+  check-epic:
+    needs: [extract-context, transition-jira]
+    if: needs.extract-context.outputs.ticket_id != ''
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Check if Epic is complete
+        continue-on-error: true
+        env:
+          AUTH: ${{ secrets.ATLASSIAN_EMAIL }}:${{ secrets.ATLASSIAN_API_TOKEN }}
+          BASE_URL: ${{ secrets.ATLASSIAN_BASE_URL }}
+          TICKET_ID: ${{ needs.extract-context.outputs.ticket_id }}
+          PROJECT_KEY: ${{ inputs.jira_project_key }}
+        run: |
+          AUTH_HEADER=$(echo -n "$AUTH" | base64)
+
+          # --- Get the ticket to find its parent Epic ---
+          ISSUE=$(curl -s \
+            -H "Authorization: Basic $AUTH_HEADER" \
+            "$BASE_URL/rest/api/3/issue/$TICKET_ID?fields=parent")
+
+          EPIC_KEY=$(echo "$ISSUE" | jq -r '.fields.parent.key // empty')
+
+          if [ -z "$EPIC_KEY" ]; then
+            echo "No parent Epic found for $TICKET_ID"
+            exit 0
+          fi
+
+          echo "Found parent Epic: $EPIC_KEY"
+
+          # --- Get all issues under the Epic and check their statuses ---
+          JQL="parent=$EPIC_KEY"
+          ISSUES=$(curl -s \
+            -H "Authorization: Basic $AUTH_HEADER" \
+            "$BASE_URL/rest/api/3/search?jql=$(echo "$JQL" | jq -sRr @uri)&fields=status")
+
+          TOTAL=$(echo "$ISSUES" | jq -r '.total')
+          DONE_COUNT=$(echo "$ISSUES" | jq '[.issues[] | select(.fields.status.statusCategory.key == "done")] | length')
+
+          echo "Epic $EPIC_KEY: $DONE_COUNT/$TOTAL issues done"
+
+          if [ "$DONE_COUNT" = "$TOTAL" ] && [ "$TOTAL" != "0" ]; then
+            echo "All issues complete! Transitioning Epic to Done..."
+
+            TRANSITIONS=$(curl -s \
+              -H "Authorization: Basic $AUTH_HEADER" \
+              "$BASE_URL/rest/api/3/issue/$EPIC_KEY/transitions")
+
+            DONE_ID=$(echo "$TRANSITIONS" | jq -r '.transitions[] | select(.name | test("Done|Closed|Resolved"; "i")) | .id' | head -1)
+
+            if [ -n "$DONE_ID" ] && [ "$DONE_ID" != "null" ]; then
+              curl -s -X POST \
+                -H "Authorization: Basic $AUTH_HEADER" \
+                -H "Content-Type: application/json" \
+                "$BASE_URL/rest/api/3/issue/$EPIC_KEY/transitions" \
+                -d "{\"transition\": {\"id\": \"$DONE_ID\"}}" > /dev/null
+              echo "Transitioned Epic $EPIC_KEY to Done"
+            fi
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Post a summary comment on the PR with transition results
+  # ---------------------------------------------------------------------------
+  report:
+    needs: [extract-context, transition-jira, check-epic]
+    if: always() && needs.extract-context.outputs.ticket_id != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add PR comment with summary
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TICKET_ID="${{ needs.extract-context.outputs.ticket_id }}"
+          TRANSITION_STATUS="${{ needs.transition-jira.result }}"
+          EPIC_STATUS="${{ needs.check-epic.result }}"
+
+          BODY="### Close-the-Loop Summary\n\n"
+          BODY+="- **Ticket**: $TICKET_ID\n"
+          BODY+="- **Transition**: ${TRANSITION_STATUS}\n"
+          BODY+="- **Epic Check**: ${EPIC_STATUS}\n"
+
+          if [ "$TRANSITION_STATUS" = "failure" ]; then
+            BODY+="\n> Warning: Jira transition failed. Please manually transition $TICKET_ID to Done."
+          fi
+
+          gh pr comment "${{ github.event.pull_request.number }}" --body "$(echo -e "$BODY")" || echo "Could not add PR comment"

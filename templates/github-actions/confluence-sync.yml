@@ -1,0 +1,318 @@
+# =============================================================================
+# Confluence Spec Sync — Reusable Workflow Template
+# Copy this file to .github/workflows/ in your repository.
+# See templates/github-actions/README.md for setup instructions.
+# =============================================================================
+#
+# CUSTOMIZATION POINTS:
+# ---------------------
+# 1. confluence_space_name: Change the default to match your team's Confluence space.
+# 2. jira_project_key: Your Jira project key (e.g., APER, ENG, PLAT).
+# 3. specs/ directory: If your repo uses a different path for specs, update the
+#    git diff and SPEC_DIR references below.
+# 4. Branch naming: The ticket ID extraction assumes branch names like
+#    "feature/APER-123-description" or "fix/ENG-456-bug". Adjust the regex
+#    in the detect step if your convention differs.
+# 5. Markdown conversion: The md_to_confluence function handles basic Markdown.
+#    For advanced formatting (tables, diagrams), consider replacing it with
+#    a dedicated tool like pandoc or markdown-it.
+# 6. The confluence-discover action (.github/actions/confluence-discover) must
+#    exist in the consuming repo. Copy it from templates/github-actions/confluence-discover/.
+#
+# REQUIRED SECRETS (set in GitHub repo or org settings):
+# - ATLASSIAN_API_TOKEN: Atlassian API token for authentication
+# - ATLASSIAN_EMAIL: Email associated with the Atlassian account
+# - ATLASSIAN_BASE_URL: Your Atlassian instance URL (e.g., https://yourorg.atlassian.net)
+# =============================================================================
+
+name: Confluence Spec Sync
+
+on:
+  workflow_call:
+    inputs:
+      confluence_space_name:
+        description: 'Confluence space name for specs'
+        type: string
+        default: 'Aperium Specs'
+      jira_project_key:
+        description: 'Jira project key (e.g., APER)'
+        type: string
+        required: true
+    secrets:
+      ATLASSIAN_API_TOKEN:
+        required: true
+      ATLASSIAN_EMAIL:
+        required: true
+      ATLASSIAN_BASE_URL:
+        required: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Detect which spec files changed and extract metadata
+  # ---------------------------------------------------------------------------
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has_spec_changes: ${{ steps.detect.outputs.has_changes }}
+      ticket_id: ${{ steps.detect.outputs.ticket_id }}
+      changed_files: ${{ steps.detect.outputs.changed_files }}
+      epic_summary: ${{ steps.detect.outputs.epic_summary }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need at least 2 commits to diff HEAD~1
+
+      - name: Detect spec changes
+        id: detect
+        run: |
+          # ---------------------------------------------------------------
+          # Find changed files in specs/ directory between last two commits.
+          # Customize the path pattern if your specs live elsewhere.
+          # ---------------------------------------------------------------
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'specs/' || echo "")
+          if [ -z "$CHANGED" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No spec changes detected — skipping Confluence sync."
+            exit 0
+          fi
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "changed_files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # ---------------------------------------------------------------
+          # Extract ticket ID from branch name.
+          # Expected format: feature/APER-123-short-description
+          # Adjust the regex if your branch naming convention differs.
+          # ---------------------------------------------------------------
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          TICKET_ID=$(echo "$BRANCH" | grep -oP '(?:feat|feature|fix|refactor|test|docs|chore|perf|security)/\K[A-Z]+-\d+' || echo "")
+          if [ -z "$TICKET_ID" ]; then
+            # Fallback: try extracting from the specs/ directory name
+            TICKET_ID=$(echo "$CHANGED" | head -1 | grep -oP 'specs/\K[A-Z]+-\d+' || echo "UNKNOWN")
+          fi
+          echo "ticket_id=$TICKET_ID" >> "$GITHUB_OUTPUT"
+          echo "::notice::Detected ticket ID: $TICKET_ID"
+
+          # ---------------------------------------------------------------
+          # Get epic summary from the first heading in requirements.md.
+          # This becomes the Confluence parent page title.
+          # ---------------------------------------------------------------
+          SUMMARY=""
+          REQ_FILE="specs/${TICKET_ID}/requirements.md"
+          if [ -f "$REQ_FILE" ]; then
+            SUMMARY=$(head -5 "$REQ_FILE" | grep -oP '(?<=# ).*' || echo "$TICKET_ID")
+          fi
+          echo "epic_summary=${SUMMARY:-$TICKET_ID}" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Convert Markdown specs to Confluence XHTML and sync pages
+  # ---------------------------------------------------------------------------
+  sync-to-confluence:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_spec_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------
+      # Discover or create the Confluence page hierarchy for this epic.
+      # This action should ensure:
+      #   - The target space exists
+      #   - A parent page for the epic exists (or is created)
+      # Outputs: space_key, epic_page_id
+      # -----------------------------------------------------------------
+      - name: Discover Confluence structure
+        id: confluence
+        uses: ./.github/actions/confluence-discover
+        with:
+          confluence_base_url: ${{ secrets.ATLASSIAN_BASE_URL }}
+          confluence_email: ${{ secrets.ATLASSIAN_EMAIL }}
+          confluence_api_token: ${{ secrets.ATLASSIAN_API_TOKEN }}
+          space_name: ${{ inputs.confluence_space_name }}
+          ticket_id: ${{ needs.detect-changes.outputs.ticket_id }}
+          epic_summary: ${{ needs.detect-changes.outputs.epic_summary }}
+
+      - name: Convert and sync spec files
+        env:
+          AUTH: ${{ secrets.ATLASSIAN_EMAIL }}:${{ secrets.ATLASSIAN_API_TOKEN }}
+          BASE_URL: ${{ secrets.ATLASSIAN_BASE_URL }}
+          SPACE_KEY: ${{ steps.confluence.outputs.space_key }}
+          EPIC_PAGE_ID: ${{ steps.confluence.outputs.epic_page_id }}
+          TICKET_ID: ${{ needs.detect-changes.outputs.ticket_id }}
+        run: |
+          set -euo pipefail
+
+          AUTH_HEADER=$(echo -n "$AUTH" | base64)
+
+          # ---------------------------------------------------------------
+          # md_to_confluence: Basic Markdown-to-Confluence XHTML converter.
+          #
+          # This handles common Markdown constructs. For full-fidelity
+          # conversion (tables, nested lists, Mermaid diagrams), consider
+          # replacing this with pandoc:
+          #   pandoc -f gfm -t html "$file"
+          # ---------------------------------------------------------------
+          md_to_confluence() {
+            local file="$1"
+            local content
+            content=$(cat "$file")
+
+            # Convert headings (process h4 before h3 before h2 before h1
+            # to avoid partial matches)
+            content=$(echo "$content" | sed 's/^#### \(.*\)/<h4>\1<\/h4>/g')
+            content=$(echo "$content" | sed 's/^### \(.*\)/<h3>\1<\/h3>/g')
+            content=$(echo "$content" | sed 's/^## \(.*\)/<h2>\1<\/h2>/g')
+            content=$(echo "$content" | sed 's/^# \(.*\)/<h1>\1<\/h1>/g')
+
+            # Convert bold and italic
+            content=$(echo "$content" | sed 's/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g')
+            content=$(echo "$content" | sed 's/\*\([^*]*\)\*/<em>\1<\/em>/g')
+
+            # Convert unordered list items
+            content=$(echo "$content" | sed 's/^- \(.*\)/<li>\1<\/li>/g')
+
+            # Convert fenced code blocks to Confluence code macro
+            content=$(echo "$content" | sed '/^```/,/^```/{
+              s/^```.*/<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[/
+              s/^```$/]]><\/ac:plain-text-body><\/ac:structured-macro>/
+            }')
+
+            # Convert inline code
+            content=$(echo "$content" | sed 's/`\([^`]*\)`/<code>\1<\/code>/g')
+
+            # Convert task list checkboxes
+            content=$(echo "$content" | sed 's/- \[x\]/<ac:task-status>complete<\/ac:task-status>/g')
+            content=$(echo "$content" | sed 's/- \[ \]/<ac:task-status>incomplete<\/ac:task-status>/g')
+
+            # Wrap plain-text lines in <p> tags (skip empty lines and
+            # lines that are already HTML elements)
+            content=$(echo "$content" | sed '/^$/d; /^<[a-z]/!s/.*/<p>&<\/p>/')
+
+            echo "$content"
+          }
+
+          # ---------------------------------------------------------------
+          # Sync each .md file in the spec directory as a child page under
+          # the epic page in Confluence.
+          # ---------------------------------------------------------------
+          SPEC_DIR="specs/${TICKET_ID}"
+          if [ ! -d "$SPEC_DIR" ]; then
+            echo "::warning::No spec directory found at $SPEC_DIR — nothing to sync."
+            exit 0
+          fi
+
+          SYNC_COUNT=0
+          ERRORS=0
+
+          for spec_file in "$SPEC_DIR"/*.md; do
+            [ -f "$spec_file" ] || continue
+
+            FILENAME=$(basename "$spec_file" .md)
+            PAGE_TITLE="${TICKET_ID}: ${FILENAME}"
+            echo "::group::Processing $PAGE_TITLE"
+
+            # Convert Markdown to Confluence storage format
+            XHTML=$(md_to_confluence "$spec_file")
+            if [ -z "$XHTML" ]; then
+              echo "::warning::Empty content for $spec_file — skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Check if a page with this title already exists in the space
+            SEARCH_RESPONSE=$(curl -sf \
+              -H "Authorization: Basic $AUTH_HEADER" \
+              "$BASE_URL/wiki/rest/api/content?spaceKey=$SPACE_KEY&title=$(echo "$PAGE_TITLE" | jq -sRr @uri)&type=page" \
+              2>&1) || {
+              echo "::error::Failed to search for existing page '$PAGE_TITLE': $SEARCH_RESPONSE"
+              ERRORS=$((ERRORS + 1))
+              echo "::endgroup::"
+              continue
+            }
+
+            EXISTING=$(echo "$SEARCH_RESPONSE" | jq -r '.results[0].id // empty')
+
+            if [ -n "$EXISTING" ]; then
+              # ---------------------------------------------------------
+              # Update existing page — must increment version number
+              # ---------------------------------------------------------
+              VERSION_RESPONSE=$(curl -sf \
+                -H "Authorization: Basic $AUTH_HEADER" \
+                "$BASE_URL/wiki/rest/api/content/$EXISTING" \
+                2>&1) || {
+                echo "::error::Failed to fetch version for page $EXISTING: $VERSION_RESPONSE"
+                ERRORS=$((ERRORS + 1))
+                echo "::endgroup::"
+                continue
+              }
+
+              VERSION=$(echo "$VERSION_RESPONSE" | jq -r '.version.number')
+              NEW_VERSION=$((VERSION + 1))
+
+              UPDATE_RESPONSE=$(curl -sf -X PUT \
+                -H "Authorization: Basic $AUTH_HEADER" \
+                -H "Content-Type: application/json" \
+                "$BASE_URL/wiki/rest/api/content/$EXISTING" \
+                -d "$(jq -n \
+                  --arg title "$PAGE_TITLE" \
+                  --arg body "$XHTML" \
+                  --argjson version "$NEW_VERSION" \
+                  --arg spaceKey "$SPACE_KEY" \
+                  '{
+                    type: "page",
+                    title: $title,
+                    space: {key: $spaceKey},
+                    version: {number: $version},
+                    body: {storage: {value: $body, representation: "storage"}}
+                  }')" \
+                2>&1) || {
+                echo "::error::Failed to update page '$PAGE_TITLE': $UPDATE_RESPONSE"
+                ERRORS=$((ERRORS + 1))
+                echo "::endgroup::"
+                continue
+              }
+
+              echo "Updated: $PAGE_TITLE (v$NEW_VERSION)"
+            else
+              # ---------------------------------------------------------
+              # Create new page as a child of the epic page
+              # ---------------------------------------------------------
+              CREATE_RESPONSE=$(curl -sf -X POST \
+                -H "Authorization: Basic $AUTH_HEADER" \
+                -H "Content-Type: application/json" \
+                "$BASE_URL/wiki/rest/api/content" \
+                -d "$(jq -n \
+                  --arg title "$PAGE_TITLE" \
+                  --arg body "$XHTML" \
+                  --arg spaceKey "$SPACE_KEY" \
+                  --arg ancestorId "$EPIC_PAGE_ID" \
+                  '{
+                    type: "page",
+                    title: $title,
+                    space: {key: $spaceKey},
+                    ancestors: [{id: $ancestorId}],
+                    body: {storage: {value: $body, representation: "storage"}}
+                  }')" \
+                2>&1) || {
+                echo "::error::Failed to create page '$PAGE_TITLE': $CREATE_RESPONSE"
+                ERRORS=$((ERRORS + 1))
+                echo "::endgroup::"
+                continue
+              }
+
+              echo "Created: $PAGE_TITLE"
+            fi
+
+            SYNC_COUNT=$((SYNC_COUNT + 1))
+            echo "::endgroup::"
+          done
+
+          # ---------------------------------------------------------------
+          # Summary
+          # ---------------------------------------------------------------
+          echo "::notice::Confluence sync complete: $SYNC_COUNT pages synced, $ERRORS errors."
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::$ERRORS page(s) failed to sync. Check logs above for details."
+            exit 1
+          fi

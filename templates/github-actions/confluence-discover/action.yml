@@ -1,0 +1,260 @@
+name: 'Confluence Discover'
+description: 'Find or create Confluence space structure for spec sync'
+
+inputs:
+  confluence_base_url:
+    description: 'Confluence base URL (e.g., https://mycompany.atlassian.net)'
+    required: true
+  confluence_email:
+    description: 'Atlassian account email'
+    required: true
+  confluence_api_token:
+    description: 'Atlassian API token'
+    required: true
+  space_name:
+    description: 'Confluence space name'
+    required: true
+    default: 'Aperium Specs'
+  ticket_id:
+    description: 'Jira ticket/epic key (e.g., APER-123)'
+    required: true
+  epic_summary:
+    description: 'Epic summary for page title'
+    required: true
+
+outputs:
+  space_key:
+    description: 'Confluence space key'
+    value: ${{ steps.discover.outputs.space_key }}
+  active_specs_page_id:
+    description: 'Active Specs parent page ID'
+    value: ${{ steps.discover.outputs.active_specs_page_id }}
+  completed_specs_page_id:
+    description: 'Completed Specs parent page ID'
+    value: ${{ steps.discover.outputs.completed_specs_page_id }}
+  epic_page_id:
+    description: 'Epic-specific page ID'
+    value: ${{ steps.discover.outputs.epic_page_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Discover or create Confluence structure
+      id: discover
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # ── Configuration ──────────────────────────────────────────────
+        BASE_URL="${{ inputs.confluence_base_url }}"
+        EMAIL="${{ inputs.confluence_email }}"
+        API_TOKEN="${{ inputs.confluence_api_token }}"
+        SPACE_NAME="${{ inputs.space_name }}"
+        TICKET_ID="${{ inputs.ticket_id }}"
+        EPIC_SUMMARY="${{ inputs.epic_summary }}"
+
+        # Strip trailing slash from base URL if present
+        BASE_URL="${BASE_URL%/}"
+
+        AUTH=$(echo -n "${EMAIL}:${API_TOKEN}" | base64)
+        CONTENT_API="${BASE_URL}/wiki/rest/api/content"
+        SPACE_API="${BASE_URL}/wiki/rest/api/space"
+
+        # ── Helper: Confluence API call with error handling ────────────
+        # Usage: confluence_api METHOD ENDPOINT [DATA]
+        # Returns: response body on stdout; exits on HTTP error
+        confluence_api() {
+          local method="$1"
+          local endpoint="$2"
+          local data="${3:-}"
+          local http_code
+          local response
+          local tmp_body
+          tmp_body=$(mktemp)
+
+          local curl_args=(
+            -s
+            -w '%{http_code}'
+            -X "${method}"
+            -H "Authorization: Basic ${AUTH}"
+            -H "Accept: application/json"
+            -o "${tmp_body}"
+          )
+
+          if [[ -n "${data}" ]]; then
+            curl_args+=(-H "Content-Type: application/json" -d "${data}")
+          fi
+
+          http_code=$(curl "${curl_args[@]}" "${endpoint}")
+
+          response=$(cat "${tmp_body}")
+          rm -f "${tmp_body}"
+
+          # 2xx is success
+          if [[ "${http_code}" -lt 200 || "${http_code}" -ge 300 ]]; then
+            echo "::error::Confluence API error (HTTP ${http_code}) for ${method} ${endpoint}"
+            echo "::error::Response: ${response}"
+            return 1
+          fi
+
+          echo "${response}"
+        }
+
+        # ── Helper: Find page by CQL query ────────────────────────────
+        # Returns page ID or empty string
+        find_page_by_cql() {
+          local cql="$1"
+          local encoded_cql
+          encoded_cql=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''${cql}'''))" 2>/dev/null \
+            || printf '%s' "${cql}" | jq -sRr @uri)
+
+          local response
+          response=$(confluence_api GET "${CONTENT_API}/search?cql=${encoded_cql}&limit=1")
+          echo "${response}" | jq -r '.results[0].id // empty'
+        }
+
+        # ── Helper: Create a page under a parent ──────────────────────
+        # Usage: create_page SPACE_KEY PARENT_ID TITLE BODY_HTML
+        # Returns: new page ID
+        create_page() {
+          local space_key="$1"
+          local parent_id="$2"
+          local title="$3"
+          local body_html="$4"
+
+          local payload
+          payload=$(jq -n \
+            --arg type "page" \
+            --arg title "${title}" \
+            --arg spaceKey "${space_key}" \
+            --arg parentId "${parent_id}" \
+            --arg body "${body_html}" \
+            '{
+              type: $type,
+              title: $title,
+              space: { key: $spaceKey },
+              ancestors: [{ id: ($parentId | tonumber) }],
+              body: {
+                storage: {
+                  value: $body,
+                  representation: "storage"
+                }
+              }
+            }')
+
+          local response
+          response=$(confluence_api POST "${CONTENT_API}" "${payload}")
+          local page_id
+          page_id=$(echo "${response}" | jq -r '.id // empty')
+
+          if [[ -z "${page_id}" ]]; then
+            echo "::error::Failed to create page '${title}' — no ID in response"
+            return 1
+          fi
+
+          echo "${page_id}"
+        }
+
+        # ── Step 1: Find space by name ─────────────────────────────────
+        echo "::group::Finding Confluence space '${SPACE_NAME}'"
+
+        SPACE_RESPONSE=$(confluence_api GET "${SPACE_API}?type=global&limit=100")
+
+        # Filter spaces by name — iterate through all results
+        SPACE_KEY=""
+        SPACE_HOME_ID=""
+        while IFS= read -r row; do
+          name=$(echo "${row}" | jq -r '.name')
+          if [[ "${name}" == "${SPACE_NAME}" ]]; then
+            SPACE_KEY=$(echo "${row}" | jq -r '.key')
+            SPACE_HOME_ID=$(echo "${row}" | jq -r '._expandable.homepage // empty' | grep -oP '\d+$' || true)
+            break
+          fi
+        done < <(echo "${SPACE_RESPONSE}" | jq -c '.results[]')
+
+        if [[ -z "${SPACE_KEY}" ]]; then
+          echo "::error::Confluence space '${SPACE_NAME}' not found. Available spaces:"
+          echo "${SPACE_RESPONSE}" | jq -r '.results[].name' | sed 's/^/  - /'
+          exit 1
+        fi
+
+        echo "Found space: key=${SPACE_KEY}"
+
+        # If we did not get the homepage ID from _expandable, fetch it explicitly
+        if [[ -z "${SPACE_HOME_ID}" ]]; then
+          SPACE_DETAIL=$(confluence_api GET "${SPACE_API}/${SPACE_KEY}?expand=homepage")
+          SPACE_HOME_ID=$(echo "${SPACE_DETAIL}" | jq -r '.homepage.id // empty')
+        fi
+
+        if [[ -z "${SPACE_HOME_ID}" ]]; then
+          echo "::error::Could not determine homepage ID for space '${SPACE_KEY}'"
+          exit 1
+        fi
+
+        echo "Space homepage ID: ${SPACE_HOME_ID}"
+        echo "::endgroup::"
+
+        # ── Step 2: Find or create "Active Specs" page ────────────────
+        echo "::group::Finding or creating 'Active Specs' page"
+
+        ACTIVE_SPECS_CQL="type=page AND space=${SPACE_KEY} AND ancestor=${SPACE_HOME_ID} AND title=\"Active Specs\""
+        ACTIVE_SPECS_ID=$(find_page_by_cql "${ACTIVE_SPECS_CQL}")
+
+        if [[ -z "${ACTIVE_SPECS_ID}" ]]; then
+          echo "Page 'Active Specs' not found — creating it"
+          ACTIVE_SPECS_BODY="<p>Container for all active (in-progress) specification documents.</p>"
+          ACTIVE_SPECS_ID=$(create_page "${SPACE_KEY}" "${SPACE_HOME_ID}" "Active Specs" "${ACTIVE_SPECS_BODY}")
+          echo "Created 'Active Specs' page: id=${ACTIVE_SPECS_ID}"
+        else
+          echo "Found 'Active Specs' page: id=${ACTIVE_SPECS_ID}"
+        fi
+
+        echo "::endgroup::"
+
+        # ── Step 3: Find or create "Completed Specs" page ─────────────
+        echo "::group::Finding or creating 'Completed Specs' page"
+
+        COMPLETED_SPECS_CQL="type=page AND space=${SPACE_KEY} AND ancestor=${SPACE_HOME_ID} AND title=\"Completed Specs\""
+        COMPLETED_SPECS_ID=$(find_page_by_cql "${COMPLETED_SPECS_CQL}")
+
+        if [[ -z "${COMPLETED_SPECS_ID}" ]]; then
+          echo "Page 'Completed Specs' not found — creating it"
+          COMPLETED_SPECS_BODY="<p>Container for all completed specification documents.</p>"
+          COMPLETED_SPECS_ID=$(create_page "${SPACE_KEY}" "${SPACE_HOME_ID}" "Completed Specs" "${COMPLETED_SPECS_BODY}")
+          echo "Created 'Completed Specs' page: id=${COMPLETED_SPECS_ID}"
+        else
+          echo "Found 'Completed Specs' page: id=${COMPLETED_SPECS_ID}"
+        fi
+
+        echo "::endgroup::"
+
+        # ── Step 4: Find or create Epic page ───────────────────────────
+        echo "::group::Finding or creating Epic page for '${TICKET_ID}'"
+
+        EPIC_CQL="type=page AND space=${SPACE_KEY} AND ancestor=${ACTIVE_SPECS_ID} AND title~\"${TICKET_ID}\""
+        EPIC_PAGE_ID=$(find_page_by_cql "${EPIC_CQL}")
+
+        if [[ -z "${EPIC_PAGE_ID}" ]]; then
+          EPIC_TITLE="${TICKET_ID}: ${EPIC_SUMMARY}"
+          echo "Epic page not found — creating '${EPIC_TITLE}'"
+          EPIC_BODY="<p>Specification documents for <strong>${TICKET_ID}</strong>: ${EPIC_SUMMARY}</p>"
+          EPIC_PAGE_ID=$(create_page "${SPACE_KEY}" "${ACTIVE_SPECS_ID}" "${EPIC_TITLE}" "${EPIC_BODY}")
+          echo "Created Epic page: id=${EPIC_PAGE_ID}"
+        else
+          echo "Found Epic page: id=${EPIC_PAGE_ID}"
+        fi
+
+        echo "::endgroup::"
+
+        # ── Step 5: Set outputs ────────────────────────────────────────
+        echo "space_key=${SPACE_KEY}" >> "${GITHUB_OUTPUT}"
+        echo "active_specs_page_id=${ACTIVE_SPECS_ID}" >> "${GITHUB_OUTPUT}"
+        echo "completed_specs_page_id=${COMPLETED_SPECS_ID}" >> "${GITHUB_OUTPUT}"
+        echo "epic_page_id=${EPIC_PAGE_ID}" >> "${GITHUB_OUTPUT}"
+
+        echo ""
+        echo "=== Confluence Discovery Complete ==="
+        echo "  Space Key:            ${SPACE_KEY}"
+        echo "  Active Specs Page:    ${ACTIVE_SPECS_ID}"
+        echo "  Completed Specs Page: ${COMPLETED_SPECS_ID}"
+        echo "  Epic Page:            ${EPIC_PAGE_ID}"
