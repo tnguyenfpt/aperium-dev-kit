@@ -8,10 +8,11 @@
 After setup, a target repository will have:
 
 - `AGENTS.md` — single source of truth for all AI agent instructions
-- Symlinks — CLAUDE.md, CODEX.md, .github/copilot-instructions.md,
-  .cursor/rules/main.mdc all pointing to AGENTS.md
-- 3 custom skills — aperium-spec, aperium-mcp-dev, aperium-security
-- MCP-DLC workflow guide — 4-phase development lifecycle reference
+- Symlinks — CLAUDE.md, .github/copilot-instructions.md pointing to AGENTS.md
+  (Codex, Augment, and Cursor read AGENTS.md natively — no symlinks needed)
+- 5 custom skills — aperium-spec-generate, aperium-sync-tasks, aperium-close-spec,
+  aperium-mcp-dev, aperium-security
+- Spec-driven workflow guide — 3-layer context model reference
 - 5 prompt templates — starter library for common tasks
 
 ## Bootstrap a New Repo (5 minutes)
@@ -26,21 +27,21 @@ git clone <aperium-dev-kit-repo-url> /tmp/aperium-dev-kit
 
 **Linux/macOS**:
 ```bash
-/tmp/aperium-dev-kit/templates/setup.sh /path/to/your-repo
+/tmp/aperium-dev-kit/setup.sh /path/to/your-repo
 ```
 
 **Windows (PowerShell)**:
 ```powershell
-/tmp/aperium-dev-kit/templates/setup.ps1 -RepoPath C:\path\to\your-repo
+/tmp/aperium-dev-kit/setup.ps1 -RepoPath C:\path\to\your-repo
 ```
 
 The script will:
 1. Copy `AGENTS.md.template` to your repo as `AGENTS.md`
 2. Prompt you to fill in CUSTOMIZABLE sections (project identity,
    architecture, build commands)
-3. Create symlinks for all agent-specific config files
-4. Update `.gitignore` to track AGENTS.md and handle symlinks
-5. Copy skills to `.agent/skills/` (or instruct on installation)
+3. Create symlinks for CLAUDE.md and .github/copilot-instructions.md
+4. Update `.gitignore` to track AGENTS.md and ignore symlink copies
+5. Copy skills to `.agents/skills/` on `--update`
 6. Copy prompt templates to `docs/prompts/`
 
 ### Step 3: Customize AGENTS.md
@@ -58,8 +59,7 @@ Leave `<!-- FIXED -->` sections unchanged.
 
 ```bash
 # Check symlinks exist and point to AGENTS.md
-ls -la CLAUDE.md CODEX.md .github/copilot-instructions.md
-ls -la .cursor/rules/main.mdc
+ls -la CLAUDE.md .github/copilot-instructions.md
 
 # Start any AI agent and verify it reads the conventions
 # Claude Code: open a session and ask "what are the coding conventions?"

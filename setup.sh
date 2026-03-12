@@ -123,8 +123,8 @@ fi
 
 if confirm_overwrite "${AGENTS_TARGET}"; then
   if cp "${TEMPLATE_FILE}" "${AGENTS_TARGET}"; then
-    # Replace {GIT_SHA} placeholder with actual commit hash
-    sed -i "s/{GIT_SHA}/${DEVKIT_SHA}/g" "${AGENTS_TARGET}"
+    # Replace {GIT_SHA} placeholder with actual commit hash (portable — no sed -i)
+    sed "s/{GIT_SHA}/${DEVKIT_SHA}/g" "${AGENTS_TARGET}" > "${AGENTS_TARGET}.tmp" && mv "${AGENTS_TARGET}.tmp" "${AGENTS_TARGET}"
     step_ok "Copied AGENTS.md.template -> AGENTS.md (version: ${DEVKIT_SHA})"
   else
     step_fail "Failed to copy AGENTS.md.template -> AGENTS.md"
@@ -318,8 +318,8 @@ if [[ "${UPDATE_MODE}" == true ]]; then
       fi
     done < "${AGENTS_TARGET}"
 
-    # Stamp version on updated file
-    sed -i "s/{GIT_SHA}/${DEVKIT_SHA}/g" "${TEMP_FILE}"
+    # Stamp version on updated file (portable — no sed -i)
+    sed "s/{GIT_SHA}/${DEVKIT_SHA}/g" "${TEMP_FILE}" > "${TEMP_FILE}.tmp" && mv "${TEMP_FILE}.tmp" "${TEMP_FILE}"
 
     mv "${TEMP_FILE}" "${AGENTS_TARGET}"
     step_ok "Updated FIXED sections in AGENTS.md from template (version: ${DEVKIT_SHA})"

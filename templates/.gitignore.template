@@ -23,7 +23,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 *.egg
-dist/
 build/
 .venv/
 venv/

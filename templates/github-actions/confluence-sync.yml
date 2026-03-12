@@ -355,6 +355,12 @@ jobs:
 
           echo "::notice::Spec marked as completed — archiving to Completed Specs."
 
+          # Guard: ensure we have the epic page ID
+          if [ -z "$EPIC_PAGE_ID" ] || [ "$EPIC_PAGE_ID" = "null" ]; then
+            echo "::warning::Epic page ID not available — cannot archive."
+            exit 0
+          fi
+
           # Re-discover page IDs (sync job outputs may not propagate)
           AUTH_HEADER=$(echo -n "$AUTH" | base64)
 

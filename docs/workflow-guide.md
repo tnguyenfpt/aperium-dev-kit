@@ -242,24 +242,37 @@ If CI fails, use `/aperium-close-spec APER-123` as a manual fallback.
 The `AGENTS.md` template uses HTML comment markers to distinguish sections:
 
 ```markdown
-<!-- FIXED:START — managed by aperium-dev-kit -->
-## Coding Conventions
-...
-## Forbidden Patterns
-...
-## Security Model
-...
-<!-- FIXED:END -->
-
-<!-- CUSTOMIZABLE:START -->
+<!-- CUSTOMIZABLE: Edit for your repository -->
 ## Project Identity
 ...
+
+<!-- CUSTOMIZABLE: Edit for your repository -->
 ## Architecture
 ...
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Coding Conventions
+...
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Forbidden Patterns
+...
+
+<!-- CUSTOMIZABLE: Edit for your repository -->
 ## Build & Test Commands
 ...
-<!-- CUSTOMIZABLE:END -->
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Security Model
+...
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Context Model
+...
 ```
+
+Each section has its own marker comment. The `--update` script matches FIXED markers by
+position and replaces content up to the next marker.
 
 - **FIXED sections**: Coding conventions, forbidden patterns, security model.
   Changes MUST be made in the dev-kit repo first, then propagated via `--update`.
