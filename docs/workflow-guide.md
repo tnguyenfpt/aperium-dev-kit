@@ -30,34 +30,27 @@ Specs live in git alongside code. CI handles Confluence synchronization on merge
 | aperium-security | `.agents/skills/aperium-security/` | 6-layer defense + OWASP Agentic Top 10 assessments |
 | aperium-mcp-dev | `.agents/skills/aperium-mcp-dev/` | FastMCP server scaffolding with PII/RBAC/test patterns |
 
-#### Tier 3 — MCP Servers (Role-Specific)
-
-| Server | Purpose |
-|--------|---------|
-| Odoo ERP MCP | ERP data access for business logic features |
-| Arena PLM MCP | Product lifecycle management integration |
-| Malbek CLM MCP | Contract lifecycle management integration |
-
 ### 1.2 Repository Bootstrap
 
 Run the setup script to bootstrap a new repo:
 
 ```bash
 # Linux/macOS
-/path/to/aperium-dev-kit/templates/setup.sh /path/to/your-repo
+/path/to/aperium-dev-kit/setup.sh /path/to/your-repo
 
 # Windows (PowerShell)
-/path/to/aperium-dev-kit/templates/setup.ps1 -RepoPath C:\path\to\your-repo
+/path/to/aperium-dev-kit/setup.ps1 -RepoPath C:\path\to\your-repo
 ```
 
 This creates:
 - `AGENTS.md` — canonical agent instructions (single source of truth)
 - `CLAUDE.md` — symlink to `AGENTS.md`
 - `.github/copilot-instructions.md` — symlink to `../AGENTS.md`
-- `.agents/skills/` — directory for custom skills
 - `specs/` — directory for feature specs
 
-Only 2 symlinks are needed. Codex and Augment read `AGENTS.md` natively.
+Only 2 symlinks are needed. Codex, Augment, and Cursor read `AGENTS.md` natively.
+
+Run with `--update` to also copy skills to `.agents/skills/` and prompts to `docs/prompts/`.
 
 ### 1.3 Simplified Symlink Strategy
 
@@ -274,7 +267,7 @@ The `AGENTS.md` template uses HTML comment markers to distinguish sections:
 Each section has its own marker comment. The `--update` script matches FIXED markers by
 position and replaces content up to the next marker.
 
-- **FIXED sections**: Coding conventions, forbidden patterns, security model.
+- **FIXED sections**: Coding conventions, forbidden patterns, security model, context model.
   Changes MUST be made in the dev-kit repo first, then propagated via `--update`.
 - **CUSTOMIZABLE sections**: Project identity, architecture, build commands.
   Each repo owns these and can modify them via normal PR review.
@@ -285,10 +278,10 @@ To pull latest FIXED sections from the dev-kit into a downstream repo:
 
 ```bash
 # Linux/macOS
-/path/to/aperium-dev-kit/templates/setup.sh --update /path/to/your-repo
+/path/to/aperium-dev-kit/setup.sh /path/to/your-repo --update
 
 # Windows (PowerShell)
-/path/to/aperium-dev-kit/templates/setup.ps1 -Update -RepoPath C:\path\to\your-repo
+/path/to/aperium-dev-kit/setup.ps1 -RepoPath C:\path\to\your-repo -Update
 ```
 
 This replaces FIXED sections while preserving CUSTOMIZABLE sections.
@@ -348,8 +341,8 @@ If either workflow fails, use the skill directly:
 |-----------|----------|---------|
 | AGENTS.md template | `templates/AGENTS.md.template` | Canonical agent instructions with FIXED/CUSTOMIZABLE sections |
 | .gitignore template | `templates/.gitignore.template` | Git tracking rules (includes symlink handling) |
-| Setup script (Bash) | `templates/setup.sh` | Bootstrap + update repos (Linux/macOS) |
-| Setup script (PS) | `templates/setup.ps1` | Bootstrap + update repos (Windows) |
+| Setup script (Bash) | `setup.sh` | Bootstrap + update repos (Linux/macOS) |
+| Setup script (PS) | `setup.ps1` | Bootstrap + update repos (Windows) |
 
 ### Skills
 
@@ -365,9 +358,9 @@ If either workflow fails, use the skill directly:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| confluence-discover | `.github/actions/confluence-discover/` | Detect changed spec directories |
-| confluence-sync.yml | `.github/workflows/confluence-sync.yml` | Sync specs to Confluence on merge |
-| close-the-loop.yml | `.github/workflows/close-the-loop.yml` | Update Jira on merge |
+| confluence-discover | `templates/github-actions/confluence-discover/` | Composite action: find/create Confluence pages |
+| confluence-sync.yml | `templates/github-actions/confluence-sync.yml` | Sync specs to Confluence on merge |
+| close-the-loop.yml | `templates/github-actions/close-the-loop.yml` | Update Jira on merge |
 
 ### Documentation
 
@@ -388,12 +381,12 @@ If either workflow fails, use the skill directly:
 
 ```bash
 # Bootstrap a new repo
-setup.sh /path/to/repo                    # Linux/macOS
-setup.ps1 -RepoPath C:\path\to\repo       # Windows
+./setup.sh /path/to/repo                    # Linux/macOS
+.\setup.ps1 -RepoPath C:\path\to\repo       # Windows
 
-# Update FIXED sections from latest dev-kit
-setup.sh --update /path/to/repo            # Linux/macOS
-setup.ps1 -Update -RepoPath C:\path\to\repo  # Windows
+# Update FIXED sections + copy skills/prompts
+./setup.sh /path/to/repo --update            # Linux/macOS
+.\setup.ps1 -RepoPath C:\path\to\repo -Update  # Windows
 ```
 
 ### Spec Workflow
