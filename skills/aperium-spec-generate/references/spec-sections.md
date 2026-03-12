@@ -85,6 +85,35 @@ See `security-template.md` for the full template.
 - **Dependencies** -- external services, APIs, upstream/downstream systems
 - **Out of Scope** -- explicit exclusions to prevent scope creep
 
+### 7. Decisions (mandatory -- v2 addition)
+
+```markdown
+## Decisions
+
+### Decision 1: {DECISION_TITLE}
+
+- **Context**: {WHAT_PROMPTED_THE_DECISION}
+- **Options considered**: {OPTIONS}
+- **Chosen**: {CHOSEN_OPTION}
+- **Rationale**: {WHY}
+- **Trade-offs**: {WHAT_WAS_GIVEN_UP}
+```
+
+### 8. Review Checklist (mandatory -- v2 addition)
+
+```markdown
+## Review Checklist
+
+- [ ] All acceptance criteria covered by tests
+- [ ] Security considerations addressed (6-layer defense)
+- [ ] PII handling verified (masking middleware applied)
+- [ ] RBAC permissions configured correctly
+- [ ] API contracts documented (OpenAPI/Pydantic models)
+- [ ] Error handling covers edge cases
+- [ ] Performance requirements validated
+- [ ] No forbidden patterns introduced (see AGENTS.md)
+```
+
 ## Compatibility Notes
 
 - All sections use standard Markdown (no agent-specific syntax)
