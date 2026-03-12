@@ -46,7 +46,8 @@ This creates:
 - `AGENTS.md` — canonical agent instructions (single source of truth)
 - `CLAUDE.md` — symlink to `AGENTS.md`
 - `.github/copilot-instructions.md` — symlink to `../AGENTS.md`
-- `specs/` — directory for feature specs
+- `specs/` — directory for feature specs (with `.gitkeep`)
+- `.gitignore` — updated with agent file rules
 
 Only 2 symlinks are needed. Codex, Augment, and Cursor read `AGENTS.md` natively.
 
@@ -60,8 +61,7 @@ CLAUDE.md -> AGENTS.md             ← symlink (Claude Code)
 .github/copilot-instructions.md -> ../AGENTS.md  ← symlink (Copilot)
 ```
 
-Codex reads `AGENTS.md` directly. Augment reads `AGENTS.md` directly.
-No other symlinks are needed.
+Codex, Augment, and Cursor read `AGENTS.md` directly. No other symlinks are needed.
 
 ---
 
@@ -71,7 +71,7 @@ All agent context is organized into three layers:
 
 | Layer | Location | Scope | Lifetime |
 |-------|----------|-------|----------|
-| **Layer 1 — Code** | `AGENTS.md` | Repository-wide conventions, architecture, forbidden patterns, security model | Permanent, updated via `--update` |
+| **Layer 1 — Code** | `AGENTS.md` | Repository-wide conventions, architecture, forbidden patterns, security requirements | Permanent, updated via `--update` |
 | **Layer 2 — Feature** | `specs/APER-123/` | Requirements, design, tasks, decisions for a single feature | Feature branch lifetime |
 | **Layer 3 — Skill** | `.agents/skills/` | Reusable procedural instructions (spec generation, task sync, security audit) | Kit version lifetime |
 
@@ -256,7 +256,7 @@ The `AGENTS.md` template uses HTML comment markers to distinguish sections:
 ...
 
 <!-- FIXED: Do not modify — managed by aperium-dev-kit -->
-## Security Model
+## Security Requirements
 ...
 
 <!-- FIXED: Do not modify — managed by aperium-dev-kit -->
@@ -267,7 +267,7 @@ The `AGENTS.md` template uses HTML comment markers to distinguish sections:
 Each section has its own marker comment. The `--update` script matches FIXED markers by
 position and replaces content up to the next marker.
 
-- **FIXED sections**: Coding conventions, forbidden patterns, security model, context model.
+- **FIXED sections**: Coding conventions, forbidden patterns, security requirements, context model.
   Changes MUST be made in the dev-kit repo first, then propagated via `--update`.
 - **CUSTOMIZABLE sections**: Project identity, architecture, build commands.
   Each repo owns these and can modify them via normal PR review.
