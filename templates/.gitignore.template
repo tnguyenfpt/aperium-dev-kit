@@ -1,0 +1,76 @@
+# =============================================================================
+# Aperium Dev Kit — .gitignore Template
+# Appended to target repos during bootstrap.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Agent Instructions (Cross-Agent Consistency)
+# -----------------------------------------------------------------------------
+# AGENTS.md is the single source of truth and MUST be tracked.
+# The following 2 files are symlinks created by the setup script (pointing to
+# AGENTS.md). They should NOT be committed as separate files — the symlinks
+# are recreated on bootstrap, not stored in version control.
+# -----------------------------------------------------------------------------
+CLAUDE.md
+.github/copilot-instructions.md
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+*.whl
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# -----------------------------------------------------------------------------
+# Node.js
+# -----------------------------------------------------------------------------
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.yarn/
+
+# -----------------------------------------------------------------------------
+# Environment & Secrets
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# -----------------------------------------------------------------------------
+# IDE & Editor
+# -----------------------------------------------------------------------------
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# OS Generated
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp

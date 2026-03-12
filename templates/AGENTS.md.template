@@ -1,0 +1,107 @@
+# AGENTS.md
+
+<!-- CUSTOMIZABLE: Edit for your repository -->
+## Project Identity
+
+- **Repository**: {REPO_NAME}
+- **Purpose**: {ONE_LINE_PURPOSE}
+- **Users**: {PRIMARY_USERS}
+- **Domain**: {BUSINESS_DOMAIN}
+
+<!-- CUSTOMIZABLE: Edit for your repository -->
+## Architecture Overview
+
+{DESCRIBE_YOUR_SERVICES_AND_HOW_THEY_CONNECT}
+
+Example structure (replace with your actual architecture):
+- **Backend**: FastAPI service at `src/api/`
+- **Frontend**: React app at `frontend/`
+- **MCP Servers**: FastMCP integrations at `mcp-*/`
+- **Data Stores**: PostgreSQL (primary), Redis (cache), Neo4j (graph)
+- **AI/ML**: Vertex AI models, BigQuery pipelines
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Coding Conventions
+
+### Python (FastAPI)
+- Async-first: `async def` for all I/O-bound operations
+- Type hints on all function signatures (mypy strict mode)
+- Google-style docstrings on public functions/classes
+- No `Any` types unless genuinely unavoidable
+- Dependency injection via FastAPI `Depends()` pattern
+- Ruff for linting and formatting (PEP 8)
+
+### TypeScript / React
+- `"strict": true` in tsconfig
+- Functional components with hooks only (no class components)
+- Zustand for state management, TanStack Query for server state
+- One component per file, co-located tests
+- No `any` types; use `unknown` and type narrowing
+
+### MCP Server Development
+- FastMCP patterns for tool definitions
+- PII masking middleware on all tools handling user data
+- RBAC permission checks before tool execution
+- Input validation, error handling, timeout configuration on every tool
+- Each MCP server has its own integration test suite
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Forbidden Patterns
+
+- `Any`/`any` types (except where genuinely unavoidable)
+- Synchronous I/O in async code paths
+- Inline SQL (use ORM/query builder)
+- Secrets in code or environment variables (use HashiCorp Vault)
+- Class components in React
+- `localStorage` usage
+
+<!-- CUSTOMIZABLE: Edit for your repository -->
+## Build & Test Commands
+
+```bash
+# Python backend
+ruff check . && ruff format --check .   # lint + format check
+mypy .                                   # type checking
+pytest --cov                             # tests with coverage
+
+# Frontend
+npm run lint && npm run typecheck        # lint + TS check
+npm run test                             # unit tests (Vitest)
+
+# E2E
+npx playwright test                      # end-to-end tests
+```
+
+Coverage: 80% for new code, 95% for critical paths (auth, payments, data integrity).
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Security Requirements
+
+All agentic features must implement the 6-layer defense chain:
+
+1. **Input Validation** — validate all user inputs and LLM outputs
+2. **Prompt Injection Detection** — check for injection patterns
+3. **Tool Permission Check** — RBAC verification before execution
+4. **Output Validation** — sanitize responses before display/action
+5. **Human Approval** — require confirmation for destructive actions
+6. **Audit Log** — log every tool invocation with context
+
+Any PR touching auth, authorization, MCP permissions, or data access
+requires mandatory security review. No exceptions.
+
+PII handling: all tools processing user data must use PII masking
+middleware. No raw PII in logs, error messages, or LLM context.
+
+<!-- FIXED: Do not modify — managed by aperium-dev-kit -->
+## Context Model
+
+This repository uses a split context model:
+
+- **Layer 1 -- Code Context** (this file, `AGENTS.md`): Architecture, conventions,
+  build commands. Lives in Git. Changes rarely.
+- **Layer 2 -- Feature Context** (`specs/`): Requirements, design, tasks, decisions.
+  Committed alongside code. Synced to Confluence via CI.
+- **Layer 3 -- Skill Context** (`.agents/skills/`): Reusable workflow instructions.
+  Lives in Git. Grows over time.
+
+<!-- aperium-dev-kit template version: {GIT_SHA} -->
